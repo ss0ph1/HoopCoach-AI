@@ -78,6 +78,11 @@ class WorkoutFeedbackRead(BaseModel):
     createdAt: datetime
 
 
+class WorkoutFeedbackUpdateResponse(BaseModel):
+    feedback: WorkoutFeedbackRead
+    workout: GeneratedWorkoutPayload
+
+
 class WorkoutListItem(BaseModel):
     id: UUID
     title: str
@@ -92,3 +97,7 @@ class WorkoutResponse(BaseModel):
     workout: GeneratedWorkoutPayload
     createdAt: datetime
     feedback: WorkoutFeedbackRead | None = None
+
+
+class WorkoutRenameRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)

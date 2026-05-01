@@ -74,7 +74,7 @@ def create_workout_plan(
                 {
                     "role": "system",
                     "content": (
-                        "You are HoopFlow AI, a practical basketball training coach. "
+                        "You are HoopCoach, a practical basketball training coach. "
                         "Generate safe, structured workouts as JSON only."
                     ),
                 },
@@ -83,7 +83,7 @@ def create_workout_plan(
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "hoopflow_workout",
+                    "name": "hoopcoach_workout",
                     "schema": WORKOUT_JSON_SCHEMA,
                     "strict": True,
                 }
@@ -295,3 +295,166 @@ def create_fallback_workout(
             ],
         ),
     )
+
+
+def adapt_workout_from_feedback(
+    workout_json: dict,
+    difficulty_feedback: str,
+    notes: str = "",
+) -> GeneratedWorkoutPayload:
+    """Adjust the saved workout immediately after feedback.
+
+    This is intentionally simple and predictable: feedback should update the
+    visible workout right away, while future generated workouts still use the
+    full feedback history in the OpenAI prompt.
+    """
+    workout = GeneratedWorkoutPayload.model_validate(workout_json)
+    adjusted = workout.model_dump(mode="json")
+    normalized_notes = notes.lower()
+
+    for section_name, drills in adjusted["sections"].items():
+        for drill in drills:
+            if section_name in {"warmup", "cooldown"}:
+                continue
+
+            if not _should_adjust_drill(drill, normalized_notes):
+                continue
+
+            if _wants_no_cones(normalized_notes):
+                drill["equipment"] = [
+                    item for item in drill["equipment"]
+                    if "cone" not in item.lower()
+                ] or ["basketball", "open space"]
+
+            if _wants_ball_handling_replacement(normalized_notes, drill):
+                drill["name"] = _adapt_drill_name(
+                    "Stationary Combo Handles Into Burst",
+                    difficulty_feedback,
+                )
+                drill["purpose"] = (
+                    "Improve ball control and change-of-speed without needing cones."
+                )
+                drill["instructions"] = (
+                    "Start in an athletic stance. Complete 20 seconds of crossover, "
+                    "between-the-legs, and behind-the-back combos, then explode forward "
+                    "for three hard dribbles. Reset and repeat on both hands."
+                )
+            else:
+                drill["name"] = _adapt_drill_name(drill["name"], difficulty_feedback)
+
+            drill["difficulty"] = _adapt_difficulty(
+                drill["difficulty"],
+                difficulty_feedback,
+            )
+            drill["instructions"] = _adapt_instructions(
+                drill["instructions"],
+                difficulty_feedback,
+                notes,
+            )
+            drill["youtubeSearchUrl"] = create_youtube_search_url(
+                f"basketball {drill['name']} tutorial"
+            )
+
+    return GeneratedWorkoutPayload.model_validate(adjusted)
+
+
+def _should_adjust_drill(drill: dict, normalized_notes: str) -> bool:
+    if not normalized_notes.strip():
+        return True
+
+    drill_text = " ".join(
+        [
+            drill.get("name", ""),
+            drill.get("purpose", ""),
+            drill.get("instructions", ""),
+            " ".join(drill.get("equipment", [])),
+        ]
+    ).lower()
+
+    skill_keywords = {
+        "shooting": ["shoot", "shot", "form"],
+        "ball handling": ["ball handling", "handle", "dribble", "dribbling"],
+        "finishing": ["finish", "layup", "rim"],
+        "defense": ["defense", "defensive", "closeout", "slide"],
+        "conditioning": ["conditioning", "sprint", "interval"],
+        "strength": ["strength", "gym", "squat", "lunge"],
+        "footwork": ["footwork", "pivot", "jab"],
+    }
+
+    matched_skill = False
+    for keywords in skill_keywords.values():
+        if any(keyword in normalized_notes for keyword in keywords):
+            matched_skill = True
+            if any(keyword in drill_text for keyword in keywords):
+                return True
+
+    if _wants_no_cones(normalized_notes) and "cone" in drill_text:
+        return True
+
+    return not matched_skill
+
+
+def _wants_no_cones(normalized_notes: str) -> bool:
+    return any(phrase in normalized_notes for phrase in ["no cone", "no cones", "without cones", "get rid of cones", "remove cones"])
+
+
+def _wants_ball_handling_replacement(normalized_notes: str, drill: dict) -> bool:
+    drill_text = f"{drill.get('name', '')} {drill.get('purpose', '')} {drill.get('instructions', '')}".lower()
+    asks_for_another_drill = any(phrase in normalized_notes for phrase in ["another drill", "different drill", "replace"])
+    mentions_ball_handling = any(keyword in normalized_notes for keyword in ["ball handling", "handle", "dribble", "dribbling"])
+    is_ball_handling_drill = any(keyword in drill_text for keyword in ["ball handling", "handle", "dribble", "dribbling", "cone"])
+
+    return asks_for_another_drill and mentions_ball_handling and is_ball_handling_drill
+
+
+def _adapt_drill_name(name: str, difficulty_feedback: str) -> str:
+    clean_name = (
+        name.replace(" Advanced Progression", "")
+        .replace(" Fundamentals", "")
+        .replace(" Steady Reps", "")
+    )
+
+    if difficulty_feedback == "too_easy":
+        return f"{clean_name} Advanced Progression"
+
+    if difficulty_feedback == "too_hard":
+        return f"{clean_name} Fundamentals"
+
+    return f"{clean_name} Steady Reps"
+
+
+def _adapt_difficulty(current_difficulty: str, difficulty_feedback: str) -> str:
+    levels = ["beginner", "intermediate", "advanced"]
+    normalized = current_difficulty.lower()
+    current_index = levels.index(normalized) if normalized in levels else 1
+
+    if difficulty_feedback == "too_easy":
+        return levels[min(current_index + 1, len(levels) - 1)]
+
+    if difficulty_feedback == "too_hard":
+        return levels[max(current_index - 1, 0)]
+
+    return levels[current_index]
+
+
+def _adapt_instructions(instructions: str, difficulty_feedback: str, notes: str) -> str:
+    base_instructions = instructions.split(" Coach adjustment:")[0]
+    note_text = f" Player note: {notes.strip()}" if notes.strip() else ""
+
+    if difficulty_feedback == "too_easy":
+        adjustment = (
+            "Coach adjustment: increase pace, add a time limit, use a tighter target, "
+            "or add a defender/decision cue while keeping good form."
+        )
+    elif difficulty_feedback == "too_hard":
+        adjustment = (
+            "Coach adjustment: slow the drill down, reduce the rep target, remove extra "
+            "constraints, and focus on clean technique before adding speed."
+        )
+    else:
+        adjustment = (
+            "Coach adjustment: keep this drill at a similar difficulty and focus on "
+            "consistent reps with short rest."
+        )
+
+    return f"{base_instructions} {adjustment}{note_text}"

@@ -84,3 +84,37 @@ def save_workout_feedback(
     db.refresh(db_feedback)
 
     return db_feedback
+
+
+def update_generated_workout_json(
+    db: Session,
+    workout: GeneratedWorkout,
+    workout_json: dict,
+) -> GeneratedWorkout:
+    workout.workout_json = workout_json
+    workout.title = workout_json.get("title", workout.title)
+    db.commit()
+    db.refresh(workout)
+
+    return workout
+
+
+def rename_generated_workout(
+    db: Session,
+    workout: GeneratedWorkout,
+    title: str,
+) -> GeneratedWorkout:
+    workout.title = title
+    workout.workout_json = {
+        **workout.workout_json,
+        "title": title,
+    }
+    db.commit()
+    db.refresh(workout)
+
+    return workout
+
+
+def delete_generated_workout(db: Session, workout: GeneratedWorkout) -> None:
+    db.delete(workout)
+    db.commit()

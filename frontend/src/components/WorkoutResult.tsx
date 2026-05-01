@@ -155,11 +155,11 @@ function FeedbackForm({
     setMessage("");
 
     try {
-      const savedFeedback = await submitWorkoutFeedback(workoutId, {
+      const result = await submitWorkoutFeedback(workoutId, {
         difficultyFeedback,
         notes
       });
-      onFeedbackSubmitted(savedFeedback);
+      onFeedbackSubmitted(result.feedback);
       setMessage("Feedback saved. Future workouts will adapt from this.");
     } catch {
       setMessage("Could not save feedback.");

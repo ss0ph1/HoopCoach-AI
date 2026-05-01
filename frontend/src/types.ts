@@ -51,6 +51,11 @@ export type WorkoutFeedback = {
   createdAt: string;
 };
 
+export type WorkoutFeedbackUpdateResponse = {
+  feedback: WorkoutFeedback;
+  workout: GeneratedWorkout;
+};
+
 export type SavedWorkoutListItem = {
   id: string;
   title: string;
@@ -66,3 +71,61 @@ export type SavedWorkoutDetail = {
   createdAt: string;
   feedback: WorkoutFeedback | null;
 };
+
+export type ShootingPhotoFeedbackStatus = "good" | "needs_work" | "unknown";
+
+export type ShootingPhotoFeedbackItem = {
+  category: string;
+  status: ShootingPhotoFeedbackStatus;
+  message: string;
+};
+
+export type ShootingPhotoAnalysisResult = {
+  score: number;
+  summary: string;
+  feedback: ShootingPhotoFeedbackItem[];
+  measurements: {
+    shootingElbowAngle: number | null;
+    shoulderTilt: number | null;
+    bodyLean: number | null;
+  };
+};
+
+export type AnalysisFeedbackStatus = "good" | "needs_work" | "unknown";
+
+export type AnalysisFeedbackItem = {
+  category: string;
+  status: AnalysisFeedbackStatus;
+  message: string;
+};
+
+export type ShootingVideoAnalysisResult = {
+  analysisType: "shooting";
+  score: number;
+  summary: string;
+  feedback: AnalysisFeedbackItem[];
+  measurements: {
+    averageElbowAngle: number | null;
+    releaseElbowAngle: number | null;
+    shoulderTilt: number | null;
+    bodyLean: number | null;
+    kneeBend: number | null;
+    followThroughHeld: boolean | null;
+  };
+};
+
+export type DribblingVideoAnalysisResult = {
+  analysisType: "dribbling";
+  score: number;
+  summary: string;
+  feedback: AnalysisFeedbackItem[];
+  measurements: {
+    averageKneeBend: number | null;
+    averageBodyLean: number | null;
+    headDownPercentage: number | null;
+    stanceStability: number | null;
+    estimatedBallHeight: string | null;
+  };
+};
+
+export type VideoAnalysisResult = ShootingVideoAnalysisResult | DribblingVideoAnalysisResult;
