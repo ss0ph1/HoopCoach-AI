@@ -14,6 +14,10 @@ class Settings:
     )
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.2")
+    aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+    aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    aws_region: str = os.getenv("AWS_REGION", "ca-central-1")
+    aws_s3_bucket_name: str = os.getenv("AWS_S3_BUCKET_NAME", "")
 
 
 @lru_cache

@@ -53,24 +53,29 @@ def analyze_shooting_video(video_bytes: bytes) -> ShootingVideoAnalysisResponse:
     video_path = write_temp_video(video_bytes)
 
     try:
-        cap = cv2.VideoCapture(video_path)
-
-        if not cap.isOpened():
-            raise ValueError("Invalid video file. Please upload a valid short MP4, MOV, or WebM video.")
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        duration = frame_count / fps if frame_count else 0
-
-        if duration > MAX_VIDEO_SECONDS:
-            raise ValueError("Please upload a short training video under 10 seconds.")
-
-        metrics = collect_shooting_metrics(cap, frame_count)
+        return analyze_shooting_video_file(video_path)
     finally:
         try:
             os.remove(video_path)
         except OSError:
             pass
+
+
+def analyze_shooting_video_file(video_path: str) -> ShootingVideoAnalysisResponse:
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        raise ValueError("Invalid video file. Please upload a valid short MP4, MOV, or WebM video.")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    duration = frame_count / fps if frame_count else 0
+
+    if duration > MAX_VIDEO_SECONDS:
+        raise ValueError("Please upload a short training video under 10 seconds.")
+
+    metrics = collect_shooting_metrics(cap, frame_count)
+    cap.release()
 
     if len(metrics) < 3:
         return NO_POSE_RESPONSE
@@ -314,4 +319,3 @@ def build_summary(score: int, analysis_name: str) -> str:
     if score >= 50:
         return f"Some {analysis_name} pieces look solid, with a few areas to clean up."
     return f"This {analysis_name} video shows several areas to improve. Use the feedback as simple coaching cues."
-

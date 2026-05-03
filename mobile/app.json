@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "HoopCoach AI",
+    "slug": "hoopcoach-ai",
+    "scheme": "hoopcoach",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0b1114"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HoopCoach needs access to your media so you can upload training photos and videos for form analysis."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

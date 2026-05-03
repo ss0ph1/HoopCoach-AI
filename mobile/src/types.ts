@@ -72,31 +72,23 @@ export type SavedWorkoutDetail = {
   feedback: WorkoutFeedback | null;
 };
 
-export type ShootingPhotoFeedbackStatus = "good" | "needs_work" | "unknown";
-
-export type ShootingPhotoFeedbackItem = {
-  category: string;
-  status: ShootingPhotoFeedbackStatus;
-  message: string;
-};
-
-export type ShootingPhotoAnalysisResult = {
-  score: number;
-  summary: string;
-  feedback: ShootingPhotoFeedbackItem[];
-  measurements: {
-    shootingElbowAngle: number | null;
-    shoulderTilt: number | null;
-    bodyLean: number | null;
-  };
-};
-
 export type AnalysisFeedbackStatus = "good" | "needs_work" | "unknown";
 
 export type AnalysisFeedbackItem = {
   category: string;
   status: AnalysisFeedbackStatus;
   message: string;
+};
+
+export type ShootingPhotoAnalysisResult = {
+  score: number;
+  summary: string;
+  feedback: AnalysisFeedbackItem[];
+  measurements: {
+    shootingElbowAngle: number | null;
+    shoulderTilt: number | null;
+    bodyLean: number | null;
+  };
 };
 
 export type ShootingVideoAnalysisResult = {
@@ -137,3 +129,11 @@ export type DribblingVideoAnalysisResult = {
 };
 
 export type VideoAnalysisResult = ShootingVideoAnalysisResult | DribblingVideoAnalysisResult;
+
+export type AnalysisRecord = {
+  id: string;
+  fileName: string;
+  analysisType: "photo" | "shooting" | "dribbling";
+  score: number;
+  uploadedAt: string;
+};

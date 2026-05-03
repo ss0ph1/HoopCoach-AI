@@ -161,6 +161,7 @@ function VideoAnalysisPanel({
 
       <section className="grid gap-4">
         <ScoreSummary result={result} isLoading={isLoading} />
+        <CloudStorageCard result={result} />
         <FeedbackList feedback={result?.feedback ?? []} />
         <MeasurementsCard result={result} />
       </section>
@@ -191,6 +192,22 @@ function ScoreSummary({
           </p>
         </div>
       </div>
+    </article>
+  );
+}
+
+function CloudStorageCard({ result }: { result: VideoAnalysisResult | null }) {
+  return (
+    <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl">
+      <p className="font-extrabold text-white">Cloud Storage</p>
+      {result?.s3Url ? (
+        <div className="mt-3 rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+          <p className="font-bold text-green-300">Video stored securely in AWS S3.</p>
+          <p className="mt-2 break-all text-xs text-slate-400">Dev URL: {result.s3Url}</p>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">After analysis, HoopCoach stores the original video in S3 and saves the result in PostgreSQL.</p>
+      )}
     </article>
   );
 }

@@ -1,4 +1,6 @@
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -55,3 +57,15 @@ class DribblingVideoAnalysisResponse(BaseModel):
     summary: str
     feedback: list[AnalysisFeedbackItem]
     measurements: DribblingVideoMeasurements
+
+
+class VideoAnalysisResponse(BaseModel):
+    id: UUID
+    analysisType: Literal["shooting", "dribbling"]
+    score: float | None
+    summary: str | None
+    feedback: list[AnalysisFeedbackItem]
+    measurements: dict[str, Any]
+    s3Url: str
+    s3Key: str
+    createdAt: datetime
