@@ -38,7 +38,7 @@ export async function generateWorkout(
 
 export async function listWorkouts(): Promise<SavedWorkoutListItem[]> {
   const response = await apiClient.get<SavedWorkoutListItem[]>("/api/workouts");
-  return response.data;
+  return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function getWorkout(workoutId: string): Promise<SavedWorkoutDetail> {
