@@ -1204,6 +1204,7 @@ function ProgressScreen({
   const performanceData = buildPerformanceData(history);
   const weeklyMinutes = buildWeeklyWorkoutMinutes(history);
   const totalMinutes = history.reduce((sum, item) => sum + item.totalDurationMinutes, 0);
+  const currentWeekMinutes = weeklyMinutes[weeklyMinutes.length - 1]?.minutes ?? 0;
 
   return (
     <section>
@@ -1215,7 +1216,7 @@ function ProgressScreen({
         <div className="mb-4 grid grid-cols-3 gap-3 max-[720px]:grid-cols-1">
           <StatCard value={`${totalMinutes}`} label="Total Minutes" />
           <StatCard value={`${history.length}`} label="Saved Workouts" />
-          <StatCard value={`${weeklyMinutes.at(-1)?.minutes ?? 0}`} label="This Week" />
+          <StatCard value={`${currentWeekMinutes}`} label="This Week" />
         </div>
         <WeeklyMinutesChart data={weeklyMinutes} />
       </DarkCard>
