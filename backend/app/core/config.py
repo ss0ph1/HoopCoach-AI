@@ -18,6 +18,14 @@ class Settings:
     aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region: str = os.getenv("AWS_REGION", "ca-central-1")
     aws_s3_bucket_name: str = os.getenv("AWS_S3_BUCKET_NAME", "")
+    cors_origins: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006",
+        ).split(",")
+        if origin.strip()
+    ]
 
 
 @lru_cache
