@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: hoopcoach-api
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
+      - key: OPENAI_MODEL
+        value: gpt-5.2
+      - key: CORS_ORIGINS
+        value: https://hoopcoach-web.vercel.app
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: ca-central-1
+      - key: AWS_S3_BUCKET_NAME
+        sync: false
