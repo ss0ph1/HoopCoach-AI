@@ -1,4 +1,5 @@
 import os
+import math
 import tempfile
 from dataclasses import dataclass
 
@@ -67,15 +68,15 @@ def analyze_dribbling_video_file(video_path: str) -> DribblingVideoAnalysisRespo
     if not cap.isOpened():
         raise ValueError("Invalid video file. Please upload a valid short MP4, MOV, or WebM video.")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    duration = frame_count / fps if frame_count else 0
-
-    if duration > MAX_VIDEO_SECONDS:
-        raise ValueError("Please upload a short training video under 10 seconds.")
-
-    metrics = collect_dribbling_metrics(cap, frame_count)
-    cap.release()
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        duration = frame_count / fps if frame_count else 0
+        if duration > MAX_VIDEO_SECONDS:
+            raise ValueError("Please upload a short training video under 10 seconds.")
+        metrics = collect_dribbling_metrics(cap, frame_count)
+    finally:
+        cap.release()
 
     if len(metrics) < 3:
         return NO_POSE_RESPONSE
@@ -98,7 +99,7 @@ def analyze_dribbling_video_file(video_path: str) -> DribblingVideoAnalysisRespo
     return DribblingVideoAnalysisResponse(
         analysisType="dribbling",
         score=score,
-        summary=build_summary(score),
+        summary="Camera-view posture estimate, not a ball-handling skill rating. " + build_summary(score),
         feedback=feedback,
         measurements=DribblingVideoMeasurements(
             averageKneeBend=round_optional(knee_bend),
@@ -121,7 +122,7 @@ def write_temp_video(video_bytes: bytes) -> str:
 
 def collect_dribbling_metrics(cap, frame_count: int) -> list[DribblingFrameMetrics]:
     mp_pose = mp.solutions.pose
-    sample_every = max(frame_count // MAX_SAMPLED_FRAMES, 1) if frame_count else 1
+    sample_every = max(math.ceil(frame_count / MAX_SAMPLED_FRAMES), 1) if frame_count else 1
     metrics: list[DribblingFrameMetrics] = []
 
     # These are simple pose and color estimates for short training clips. They
@@ -129,7 +130,8 @@ def collect_dribbling_metrics(cap, frame_count: int) -> list[DribblingFrameMetri
     # basketball stat tracker.
     with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose:
         frame_index = 0
-        while True:
+        sampled = 0
+        while sampled < MAX_SAMPLED_FRAMES:
             success, frame = cap.read()
             if not success:
                 break
@@ -138,6 +140,7 @@ def collect_dribbling_metrics(cap, frame_count: int) -> list[DribblingFrameMetri
                 frame_index += 1
                 continue
 
+            sampled += 1
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = pose.process(frame_rgb)
 
@@ -182,17 +185,18 @@ def analyze_pose_frame(points: dict[str, Point], frame) -> DribblingFrameMetrics
 
     hip_midpoint = midpoint(points["left_hip"], points["right_hip"])
     shoulder_midpoint = midpoint(points["left_shoulder"], points["right_shoulder"])
-    knee_bend = average(
-        [
-            calculate_angle(points["left_hip"], points["left_knee"], points["left_ankle"]),
-            calculate_angle(points["right_hip"], points["right_knee"], points["right_ankle"]),
-        ]
-    )
+    # Restore the frame aspect ratio before measuring image-plane angles.
+    aspect = frame.shape[1] / frame.shape[0]
+    geometry = {name: Point(point.x * aspect, point.y, point.visibility) for name, point in points.items()}
+    knee_bend = average([
+        calculate_angle(geometry["left_hip"], geometry["left_knee"], geometry["left_ankle"]),
+        calculate_angle(geometry["right_hip"], geometry["right_knee"], geometry["right_ankle"]),
+    ])
     body_lean = calculate_body_lean(
-        points["left_shoulder"],
-        points["right_shoulder"],
-        points["left_hip"],
-        points["right_hip"],
+        geometry["left_shoulder"],
+        geometry["right_shoulder"],
+        geometry["left_hip"],
+        geometry["right_hip"],
     )
     head_down = estimate_head_down(points["nose"], shoulder_midpoint, hip_midpoint)
     ball_height = detect_ball_height(frame, hip_midpoint, points)
@@ -207,17 +211,8 @@ def analyze_pose_frame(points: dict[str, Point], frame) -> DribblingFrameMetrics
 
 
 def estimate_head_down(nose: Point, shoulder_midpoint: Point, hip_midpoint: Point) -> bool | None:
-    if not all(is_visible(point) for point in [nose, shoulder_midpoint, hip_midpoint]):
-        return None
-
-    torso_height = abs(hip_midpoint.y - shoulder_midpoint.y)
-    if torso_height == 0:
-        return None
-
-    # If the nose drops too close to the shoulder line, the player is probably
-    # looking down instead of scanning forward.
-    head_clearance = shoulder_midpoint.y - nose.y
-    return head_clearance < torso_height * 0.32
+    # Body landmarks do not reliably establish gaze direction across camera angles.
+    return None
 
 
 def detect_ball_height(frame, hip_midpoint: Point, points: dict[str, Point]) -> str | None:
@@ -230,23 +225,35 @@ def detect_ball_height(frame, hip_midpoint: Point, points: dict[str, Point]) -> 
     if not contours:
         return None
 
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < 80:
+    if not all(is_visible(points[name]) for name in ["left_knee", "right_knee"]):
         return None
-
-    _, y, _, h = cv2.boundingRect(largest)
-    frame_height = frame.shape[0]
-    ball_y = (y + h / 2) / frame_height
+    frame_height, frame_width = frame.shape[:2]
+    shoulder_y = min(points["left_shoulder"].y, points["right_shoulder"].y)
     knee_y = average([points["left_knee"].y, points["right_knee"].y])
-
-    if knee_y is None:
-        return "unknown"
-
-    if ball_y > knee_y:
-        return "low"
-    if ball_y > hip_midpoint.y:
-        return "medium"
-    return "high"
+    if knee_y is None or knee_y <= hip_midpoint.y:
+        return None
+    bottom_y = max(points["left_ankle"].y, points["right_ankle"].y)
+    body_height = max(0.15, bottom_y - shoulder_y)
+    torso_x = [points[name].x for name in ["left_shoulder", "right_shoulder", "left_hip", "right_hip"]]
+    candidates = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        x, y, w, h = cv2.boundingRect(contour)
+        center_x, center_y = (x + w / 2) / frame_width, (y + h / 2) / frame_height
+        perimeter = cv2.arcLength(contour, True)
+        circularity = 4 * math.pi * area / (perimeter * perimeter) if perimeter else 0
+        diameter = max(w / frame_width, h / frame_height) / body_height
+        if (area < 12 or not 0.7 <= w / h <= 1.4 or circularity < 0.55
+                or not 0.04 <= diameter <= 0.3 or abs(center_x - hip_midpoint.x) > body_height * 0.9
+                or center_y < shoulder_y - body_height * 0.25 or center_y > bottom_y + body_height * 0.2
+                or (min(torso_x) <= center_x <= max(torso_x) and shoulder_y <= center_y <= hip_midpoint.y)):
+            continue
+        candidates.append((area, center_y))
+    candidates.sort(reverse=True)
+    if not candidates or (len(candidates) > 1 and candidates[1][0] > candidates[0][0] * 0.65):
+        return None
+    ball_y = candidates[0][1]
+    return "low" if ball_y > knee_y else "medium" if ball_y > hip_midpoint.y else "high"
 
 
 def calculate_head_down_percentage(metrics: list[DribblingFrameMetrics]) -> float | None:
@@ -265,9 +272,9 @@ def calculate_stance_stability(metrics: list[DribblingFrameMetrics]) -> float | 
 
 def summarize_ball_height(metrics: list[DribblingFrameMetrics]) -> str:
     heights = [item.ball_height for item in metrics if item.ball_height]
-    if not heights:
+    if len(heights) < 3 or len(set(heights)) < 2:
         return "unknown"
-    return max(set(heights), key=heights.count)
+    return max(sorted(set(heights)), key=heights.count)
 
 
 def evaluate_head_position(head_down_percentage: float | None) -> AnalysisFeedbackItem:
@@ -297,9 +304,7 @@ def evaluate_body_lean(lean: float | None) -> AnalysisFeedbackItem:
 def evaluate_stance_stability(stability: float | None) -> AnalysisFeedbackItem:
     if stability is None:
         return AnalysisFeedbackItem(category="Stance stability", status="unknown", message="Not enough hip tracking data to estimate stability.")
-    if stability <= 0.08:
-        return AnalysisFeedbackItem(category="Stance stability", status="good", message="Your hip movement looks controlled across the sampled frames.")
-    return AnalysisFeedbackItem(category="Stance stability", status="needs_work", message="Your base shifts a lot. Work on controlled side-to-side movement.")
+    return AnalysisFeedbackItem(category="Stance stability", status="unknown", message="Hip movement can reflect camera motion or intentional footwork; it is not scored as a technique fault.")
 
 
 def evaluate_ball_height(ball_height: str | None) -> AnalysisFeedbackItem:

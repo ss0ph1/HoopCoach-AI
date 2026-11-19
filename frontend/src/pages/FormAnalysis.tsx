@@ -1,5 +1,8 @@
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { analyzeDribblingVideo, analyzeShootingVideo } from "../api/analysis.js";
+import { errorMessage } from "../api/error-message.js";
+import { AnalysisMethods, ShootingInsightsPanel } from "../components/ShootingInsights.js";
+import type { CaptureSetup, CameraView } from "../analysis/shooting-insights.js";
 import UploadShootingPhoto from "./UploadShootingPhoto.js";
 import type {
   AnalysisFeedbackItem,
@@ -22,7 +25,7 @@ export default function FormAnalysis({
   onVideoAnalyzed
 }: {
   themeMode?: "night" | "day";
-  onVideoAnalyzed?: (record: AnalysisVideoRecord) => void;
+  onVideoAnalyzed?: (record: AnalysisVideoRecord) => Promise<void> | void;
 }) {
   const [activeTab, setActiveTab] = useState<AnalysisTab>("photo");
 
@@ -34,7 +37,7 @@ export default function FormAnalysis({
           Basketball Video Analysis
         </h1>
         <p className="mt-2 max-w-2xl text-slate-400">
-          Upload a short single-player training video. HoopCoach uses OpenCV and MediaPipe Pose for simple, explainable movement feedback.
+          Upload a clear single-player training clip for simple, explainable pose feedback. Analysis runs on your device; measurements depend on the camera angle and visibility.
         </p>
       </div>
 
@@ -53,6 +56,7 @@ export default function FormAnalysis({
       {activeTab === "photo" ? <UploadShootingPhoto themeMode={themeMode} /> : null}
       {activeTab === "shooting" ? <VideoAnalysisPanel analysisType="shooting" onVideoAnalyzed={onVideoAnalyzed} /> : null}
       {activeTab === "dribbling" ? <VideoAnalysisPanel analysisType="dribbling" onVideoAnalyzed={onVideoAnalyzed} /> : null}
+      <AnalysisMethods />
     </section>
   );
 }
@@ -82,12 +86,18 @@ function VideoAnalysisPanel({
   onVideoAnalyzed
 }: {
   analysisType: "shooting" | "dribbling";
-  onVideoAnalyzed?: (record: AnalysisVideoRecord) => void;
+  onVideoAnalyzed?: (record: AnalysisVideoRecord) => Promise<void> | void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<VideoAnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
+  const [preview,setPreview] = useState("");
+  useEffect(()=>{if(!selectedFile){setPreview("");return;}const url=URL.createObjectURL(selectedFile);setPreview(url);return()=>URL.revokeObjectURL(url);},[selectedFile]);
+  const [setup, setSetup] = useState<CaptureSetup>({view:"unknown",fixedCamera:false,trackBall:true});
+  function updateSetup(next:CaptureSetup) { setSetup(next);setResult(null);setError(""); }
+
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setSelectedFile(event.target.files?.[0] ?? null);
@@ -102,14 +112,16 @@ function VideoAnalysisPanel({
     }
 
     setIsLoading(true);
+    setResult(null);
     setError("");
+    setProgress("");
 
     try {
       const analysisResult = analysisType === "shooting"
-        ? await analyzeShootingVideo(selectedFile)
-        : await analyzeDribblingVideo(selectedFile);
+        ? await analyzeShootingVideo(selectedFile, setProgress, setup)
+        : await analyzeDribblingVideo(selectedFile, setProgress);
       setResult(analysisResult);
-      onVideoAnalyzed?.({
+      await onVideoAnalyzed?.({
         id: `${Date.now()}-${selectedFile.name}`,
         fileName: selectedFile.name,
         analysisType,
@@ -117,7 +129,7 @@ function VideoAnalysisPanel({
         uploadedAt: new Date().toISOString()
       });
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Could not analyze that video.");
+      setError(errorMessage(caughtError));
     } finally {
       setIsLoading(false);
     }
@@ -133,17 +145,28 @@ function VideoAnalysisPanel({
               {analysisType === "shooting" ? "Upload a shooting video" : "Upload a dribbling video"}
             </p>
             <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-400">
-              Use a clear front or side view. Keep it under 10 seconds with one player visible.
+              Keep one player clearly visible and the clip under 10 seconds. Choose the camera angle below for shooting observations.
             </p>
             <label className="mt-5 inline-flex cursor-pointer rounded-md bg-orange-600 px-4 py-3 font-extrabold text-white hover:bg-orange-500">
               Choose Video
-              <input className="sr-only" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-m4v" onChange={handleFileChange} />
+              <input className="sr-only" type="file" disabled={isLoading} accept="video/mp4,video/quicktime,video/webm,video/x-m4v" onChange={handleFileChange} />
             </label>
-            {selectedFile ? <p className="mt-3 text-sm font-bold text-orange-300">{selectedFile.name}</p> : null}
+            {selectedFile ? <p className="mt-3 break-words text-sm font-bold text-orange-300">{selectedFile.name}</p> : null}
+            {preview && <video src={preview} controls playsInline preload="metadata" className="mt-4 max-h-64 w-full rounded-lg bg-black" aria-label="Selected training video preview" />}
           </div>
         </div>
 
-        {error ? <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm font-bold text-red-300">{error}</p> : null}
+        {analysisType === "shooting" && <fieldset disabled={isLoading} className="mt-5 grid gap-3 rounded-lg border border-white/10 p-4 text-sm text-slate-300">
+          <legend className="px-2 font-bold text-white">Capture setup</legend>
+          <label className="grid gap-2">Camera angle<select value={setup.view} onChange={e=>updateSetup({...setup,view:e.target.value as CameraView})} className="rounded-md border border-white/20 bg-[#0b1114] p-3 text-white">
+            <option value="unknown">Other / not sure</option><option value="side">Side view</option><option value="front">Front view</option><option value="oblique">Oblique / diagonal view</option>
+          </select></label>
+          <label className="flex items-start gap-2"><input type="checkbox" checked={setup.fixedCamera} onChange={e=>updateSetup({...setup,fixedCamera:e.target.checked})} className="mt-1"/>Camera stayed fixed and level</label>
+          <label className="flex items-start gap-2"><input type="checkbox" checked={setup.trackBall} disabled={setup.view!=="side" || !setup.fixedCamera} onChange={e=>updateSetup({...setup,trackBall:e.target.checked})} className="mt-1"/>Track visible ball flight (fixed side view)</label>
+          <p className="text-xs leading-5 text-slate-400">All views support basic pose estimates when visible. Side view: leg extension and projected ball flight. Front view: 2D joint alignment. Keep the full body, release and ball apex visible. Camera selection is your description, not an automatic calibration.</p>
+        </fieldset>}
+
+        {error ? <p role="alert" className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm font-bold text-red-300">{error}</p> : null}
 
         <button
           className="mt-5 w-full rounded-md bg-orange-600 py-4 font-extrabold text-white disabled:opacity-60"
@@ -153,6 +176,7 @@ function VideoAnalysisPanel({
         >
           {isLoading ? "Analyzing..." : `Analyze ${analysisType === "shooting" ? "Shooting" : "Dribbling"} Video`}
         </button>
+        {isLoading && progress && <p role="status" className="mt-3 text-sm text-orange-300">{progress}</p>}
 
         <p className="mt-4 text-sm leading-6 text-slate-500">
           This is a beginner-friendly estimate using pose landmarks, not professional biomechanics analysis.
@@ -161,10 +185,11 @@ function VideoAnalysisPanel({
 
       <section className="grid gap-4">
         <ScoreSummary result={result} isLoading={isLoading} />
-        <CloudStorageCard result={result} />
+        <CloudStorageCard result={result} local />
         <FeedbackList feedback={result?.feedback ?? []} />
         <MeasurementsCard result={result} />
       </section>
+      {result?.analysisType === "shooting" && result.insights && <ShootingInsightsPanel insights={result.insights} />}
     </div>
   );
 }
@@ -178,10 +203,11 @@ function ScoreSummary({
 }) {
   return (
     <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl">
-      <p className="font-extrabold text-white">Overall Score</p>
+      <p className="font-extrabold text-white">Rule-based Check Index</p>
+      <p className="mt-1 text-xs text-slate-400">Experimental checklist percentage; not a validated skill score.</p>
       <div className="mt-4 flex items-center gap-5">
         <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full border-8 border-green-600 text-3xl font-extrabold text-green-400">
-          {isLoading ? "..." : result?.score ?? 0}
+          {isLoading ? "..." : result?.score ?? "—"}
         </div>
         <div>
           <p className="text-xl font-extrabold text-green-400">
@@ -196,7 +222,8 @@ function ScoreSummary({
   );
 }
 
-function CloudStorageCard({ result }: { result: VideoAnalysisResult | null }) {
+function CloudStorageCard({ result, local }: { result: VideoAnalysisResult | null; local: boolean }) {
+  if (local || result?.processing === "browser") return <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl"><p className="font-extrabold text-white">Video Privacy</p><p className="mt-2 text-sm text-slate-400">Videos are processed on your device. The original video is not uploaded. When signed in, your analysis summary is saved to your account.</p></article>;
   return (
     <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl">
       <p className="font-extrabold text-white">Cloud Storage</p>
@@ -260,11 +287,11 @@ function getMeasurementRows(result: VideoAnalysisResult) {
     const measurements = result.measurements as ShootingVideoAnalysisResult["measurements"];
     return [
       { label: "Average Elbow Angle", value: formatNumber(measurements.averageElbowAngle, "deg") },
-      { label: "Release Elbow Angle", value: formatNumber(measurements.releaseElbowAngle, "deg") },
-      { label: "Shoulder Tilt", value: formatNumber(measurements.shoulderTilt, "") },
+      { label: "Estimated Release Elbow Angle", value: formatNumber(measurements.releaseElbowAngle, "deg") },
+      { label: "Shoulder Height Difference", value: measurements.shoulderTilt === null ? "Unknown" : `${(measurements.shoulderTilt * 100).toFixed(1)}% of image height` },
       { label: "Body Lean", value: formatNumber(measurements.bodyLean, "deg") },
       { label: "Knee Bend", value: formatNumber(measurements.kneeBend, "deg") },
-      { label: "Follow-Through Held", value: measurements.followThroughHeld === null ? "Unknown" : measurements.followThroughHeld ? "Yes" : "No" }
+      { label: "Arm Extension After Estimated Release", value: measurements.followThroughHeld === null ? "Unknown" : measurements.followThroughHeld ? "Held" : "Not held" }
     ];
   }
 

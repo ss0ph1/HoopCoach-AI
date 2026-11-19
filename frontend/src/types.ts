@@ -105,6 +105,7 @@ export type AnalysisFeedbackItem = {
 };
 
 export type ShootingVideoAnalysisResult = {
+  insights?: import("./analysis/shooting-insights.js").ShootingInsights;
   processing?: "browser";
   id?: string;
   analysisType: "shooting";
