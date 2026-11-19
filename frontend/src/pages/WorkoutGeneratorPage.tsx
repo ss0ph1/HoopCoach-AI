@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { deleteWorkout, getWorkout, listWorkouts, generateWorkout, renameWorkout, submitWorkoutFeedback } from "../api/workouts.js";
+import { useAccount } from "../context/AccountContext.js";
+import { loadAnalyses, saveAnalysis } from "../api/account.js";
+import { completeWorkout } from "../api/workouts.js";
 import FormAnalysis from "./FormAnalysis.js";
 import type {
   GeneratedWorkout,
@@ -36,7 +39,7 @@ const targetSkills: TargetSkill[] = [
 const equipmentOptions = ["basketball", "hoop", "cones", "resistance bands", "dumbbells", "none"];
 
 export default function WorkoutGeneratorPage() {
-  const [activeView, setActiveView] = useState<ActiveView>("dashboard");
+  const [activeView, setActiveView] = useState<ActiveView>("generate");
   const [themeMode, setThemeMode] = useState<ThemeMode>("night");
   const [history, setHistory] = useState<SavedWorkoutListItem[]>([]);
   const [selectedWorkout, setSelectedWorkout] = useState<SavedWorkoutDetail | null>(null);
@@ -113,12 +116,9 @@ export default function WorkoutGeneratorPage() {
     setActiveView("session");
   }
 
-  function handleAnalysisVideoSaved(record: AnalysisVideoRecord) {
-    setAnalysisVideos((current) => {
-      const nextRecords = [record, ...current].slice(0, 30);
-      localStorage.setItem("hoopcoach-analysis-videos", JSON.stringify(nextRecords));
-      return nextRecords;
-    });
+  async function handleAnalysisVideoSaved(record: AnalysisVideoRecord) {
+    try { const saved = await saveAnalysis(record); setAnalysisVideos(current => [saved, ...current]); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save analysis history.'); }
   }
 
   async function handleRenameWorkout(workoutId: string, title: string) {
@@ -157,7 +157,7 @@ export default function WorkoutGeneratorPage() {
 
   useEffect(() => {
     void refreshHistory();
-    setAnalysisVideos(loadAnalysisVideoRecords());
+    void loadAnalyses().then(setAnalysisVideos).catch(() => setError('Could not load analysis history.'));
   }, []);
 
   const recentWorkout = selectedWorkout ?? (generatedWorkout && generatedWorkoutId
@@ -174,8 +174,9 @@ export default function WorkoutGeneratorPage() {
       <div className="mx-auto flex min-h-screen max-w-[1500px]">
         <Sidebar activeView={activeView} themeMode={themeMode} onChange={setActiveView} />
         <main className="min-w-0 flex-1 pb-24 md:pb-6">
-          <TopBar themeMode={themeMode} onToggleTheme={() => setThemeMode((current) => current === "night" ? "day" : "night")} />
+          <TopBar onAccount={() => setActiveView("profile")} themeMode={themeMode} onToggleTheme={() => setThemeMode((current) => current === "night" ? "day" : "night")} />
           <div className="p-4 md:p-6">
+            {error && activeView !== "generate" && <p role="alert" className="mb-4 rounded-lg border border-orange-500/40 p-3 text-orange-300">{error}</p>}
             {activeView === "dashboard" ? (
               <Dashboard history={history} onOpenWorkout={openWorkout} onNavigate={setActiveView} />
             ) : null}
@@ -200,6 +201,7 @@ export default function WorkoutGeneratorPage() {
             {activeView === "session" ? (
               <WorkoutSessionScreen
                 workout={activeSessionWorkout}
+                onComplete={async (indexes) => { if (activeSessionWorkout) { await completeWorkout(activeSessionWorkout.id, indexes); await refreshHistory(); } }}
                 onExit={() => setActiveView("workouts")}
                 onOpenTutorial={setActiveTutorialDrill}
               />
@@ -235,12 +237,15 @@ function Brand() {
 }
 
 function TopBar({
+  onAccount,
   themeMode,
   onToggleTheme
 }: {
+  onAccount: () => void;
   themeMode: ThemeMode;
   onToggleTheme: () => void;
 }) {
+  const { user, showAuth } = useAccount();
   return (
     <header className={themeMode === "night" ? "sticky top-0 z-20 flex h-16 items-center justify-between border-b border-white/10 bg-[#0a1013]/90 px-4 backdrop-blur md:px-6" : "sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur md:px-6"}>
       <button className={themeMode === "night" ? "text-xl text-slate-300" : "text-xl text-slate-700"} type="button">☰</button>
@@ -252,7 +257,10 @@ function TopBar({
         >
           {themeMode === "night" ? "☀ Day" : "☾ Night"}
         </button>
-        <button className={themeMode === "night" ? "text-xl text-slate-300" : "text-xl text-slate-700"} type="button">♧</button>
+        {user ? <button onClick={onAccount} aria-label="My profile" className="max-w-28 truncate text-sm font-bold">{user.name}</button> : <>
+          <button type="button" className="text-sm font-bold" onClick={() => showAuth('signin')}>Sign in</button>
+          <button type="button" className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-bold text-white" onClick={() => showAuth('signup')}>Sign up</button>
+        </>}
       </div>
     </header>
   );
@@ -267,6 +275,7 @@ function Sidebar({
   themeMode: ThemeMode;
   onChange: (view: ActiveView) => void;
 }) {
+  const { user, showAuth } = useAccount();
   return (
     <aside className={themeMode === "night" ? "hidden w-56 shrink-0 border-r border-white/10 bg-[#0b1114] p-4 md:block" : "hidden w-56 shrink-0 border-r border-slate-200 bg-white p-4 md:block"}>
       <Brand />
@@ -284,11 +293,12 @@ function Sidebar({
         ))}
       </nav>
       <div className="mt-24 rounded-lg border border-orange-500/40 bg-orange-500/10 p-3">
-        <p className="font-bold text-orange-300">Premium</p>
-        <p className="mt-2 text-xs leading-5 text-slate-300">Unlock advanced insights and personalized coaching.</p>
-        <button className="mt-3 w-full rounded-md bg-orange-600 py-2 text-sm font-extrabold" type="button">
-          Go Premium
-        </button>
+        <p className="font-bold text-orange-300">{user ? user.name : 'Training as a guest'}</p>
+        <p className="mt-2 text-xs leading-5 text-slate-400">{user ? 'Your training is saved to your account.' : 'Create an account to save your training across devices.'}</p>
+        {user ? <button className="mt-3 w-full rounded-md bg-orange-600 py-2 text-sm font-extrabold text-white" onClick={() => onChange('profile')}>My account</button> : <div className="mt-3 grid gap-2">
+          <button className="rounded-md bg-orange-600 py-2 text-sm font-extrabold text-white" onClick={() => showAuth('signup')}>Sign up</button>
+          <button className="py-2 text-sm font-bold" onClick={() => showAuth('signin')}>Sign in</button>
+        </div>}
       </div>
     </aside>
   );
@@ -330,30 +340,27 @@ function Dashboard({
   onNavigate: (view: ActiveView) => void;
 }) {
   const recent = history[0];
-  const avgScore = useMemo(() => {
-    const feedbackCount = history.filter((item) => item.feedback).length;
-    return feedbackCount ? 78 : 72;
-  }, [history]);
-
+  const { user } = useAccount();
+  const completed = history.filter(item => item.completedAt && item.completedMinutes);
   return (
     <section>
-      <h1 className="mb-2 text-3xl font-extrabold">Welcome back, Alex! 👋</h1>
+      <h1 className="mb-2 text-3xl font-extrabold">Welcome back, {user?.name || "player"}! 👋</h1>
       <p className="mb-6 text-slate-400">Ready to get better today?</p>
 
       <DarkCard title="This Week Overview">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard value={String(Math.max(history.length, 4))} label="Workouts" />
-          <StatCard value={String(history.reduce((sum, item) => sum + item.totalDurationMinutes, 0) || 210)} label="Minutes" />
-          <StatCard value={`${avgScore}%`} label="Avg. Score" />
-          <StatCard value="🔥" label="Day Streak" />
+          <StatCard value={String(history.length)} label="Workouts" />
+          <StatCard value={String(completed.reduce((sum, item) => sum + (item.completedMinutes || 0), 0))} label="Minutes" />
+          <StatCard value={String(completed.length)} label="Completed" />
+          <StatCard value={String(trainingStreak(history))} label="Day Streak" />
         </div>
       </DarkCard>
 
       <DarkCard title="Recent Workout" className="mt-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="font-extrabold">{recent?.title ?? "Full Court Skills & Conditioning"}</p>
-            <p className="mt-1 text-sm text-slate-400">{recent ? formatDate(recent.createdAt) : "May 16, 2025"} · {recent?.totalDurationMinutes ?? 45} min</p>
+            <p className="font-extrabold">{recent?.title ?? "No workouts saved yet"}</p>
+            <p className="mt-1 text-sm text-slate-400">{recent ? `${formatDate(recent.createdAt)} · ${recent.totalDurationMinutes} min` : "Generate your first workout to get started."}</p>
             <button
               className="mt-4 rounded-md bg-orange-600 px-4 py-2 text-sm font-extrabold"
               type="button"
@@ -362,7 +369,7 @@ function Dashboard({
               View Workout
             </button>
           </div>
-          <ScorePill score={85} />
+          {recent?.completedAt ? <span className="text-sm text-green-400">Completed</span> : null}
         </div>
       </DarkCard>
 
@@ -386,9 +393,10 @@ function GenerateWorkoutScreen({
   error: string;
   onGenerate: (request: WorkoutRequestInput) => void;
 }) {
+  const { user } = useAccount();
   const [availableTimeMinutes, setAvailableTimeMinutes] = useState(60);
   const [selectedSkills, setSelectedSkills] = useState<TargetSkill[]>(["shooting", "ball handling"]);
-  const [skillLevel, setSkillLevel] = useState<SkillLevel>("intermediate");
+  const [skillLevel, setSkillLevel] = useState<SkillLevel>(user?.skillLevel || "intermediate");
   const [equipment, setEquipment] = useState(["basketball", "hoop"]);
   const [includeGymWorkout, setIncludeGymWorkout] = useState(true);
 
@@ -400,14 +408,16 @@ function GenerateWorkoutScreen({
 
   function toggleEquipment(item: string) {
     setEquipment((current) =>
-      current.includes(item) ? current.filter((value) => value !== item) : [...current, item]
+      item === "none" ? ["none"] : current.includes(item) ? current.filter((value) => value !== item) : [...current.filter(value => value !== "none"), item]
     );
   }
 
   return (
     <section>
       <h1 className="text-3xl font-extrabold">Generate Workout</h1>
-      <p className="mt-2 text-slate-400">Get a personalized workout plan in seconds.</p>
+      <p className="mt-2 text-slate-400">A new AI workout, tailored to your time, skills and equipment.</p>
+      <AIStatus />
+      <p className="mt-3 text-xs text-slate-400">{user ? "Workouts are saved to your account across devices." : "Guest workouts are saved in this browser on this device."}</p>
 
       <form
         className="mt-6 rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl"
@@ -434,12 +444,14 @@ function GenerateWorkoutScreen({
         <DarkField label="Focus Skills (Select up to 3)">
           <div className="flex flex-wrap gap-2">
             {targetSkills.map((skill) => (
-              <Chip key={skill} selected={selectedSkills.includes(skill)} onClick={() => toggleSkill(skill)}>
+              <Chip key={skill} selected={selectedSkills.includes(skill)} disabled={isGenerating || (selectedSkills.length === 3 && !selectedSkills.includes(skill))} onClick={() => toggleSkill(skill)}>
                 {titleCase(skill)}
               </Chip>
             ))}
           </div>
         </DarkField>
+
+        <p className="mb-4 text-xs text-slate-400">{selectedSkills.length}/3 skills selected. All combinations are supported. Deselect a skill to choose another when three are selected.</p>
 
         <DarkField label="Skill Level">
           <select className={darkInputClass} value={skillLevel} onChange={(event) => setSkillLevel(event.target.value as SkillLevel)}>
@@ -464,9 +476,9 @@ function GenerateWorkoutScreen({
           <input className="h-5 w-5 accent-orange-600" type="checkbox" checked={includeGymWorkout} onChange={(event) => setIncludeGymWorkout(event.target.checked)} />
         </label>
 
-        {error ? <p className="mt-4 text-sm font-bold text-red-400">{error}</p> : null}
+        {error ? <p role="alert" className="mt-4 text-sm font-bold text-red-400">{error}</p> : null}
         <button className="mt-8 w-full rounded-md bg-orange-600 py-4 font-extrabold hover:bg-orange-500 disabled:opacity-60" disabled={isGenerating || selectedSkills.length === 0}>
-          {isGenerating ? "Generating..." : "Generate My Workout 🏀"}
+          {isGenerating ? "AI is building your workout…" : "Generate My Workout 🏀"}
         </button>
       </form>
     </section>
@@ -586,6 +598,11 @@ function WorkoutDetailScreen({
               {workout.workout.title}
             </h1>
           )}
+          {workout.workout.generation ? (
+            <p className="mt-3 text-sm text-emerald-400" title={workout.workout.generation.responseId ?? undefined}>
+              ✓ AI generated · {workout.workout.generation.model}
+            </p>
+          ) : null}
           <p className="mt-2 text-slate-400">{formatDate(workout.createdAt)} · {workout.workout.totalDurationMinutes} min · {workout.workout.focusAreas.join(", ")}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-slate-200 hover:border-orange-500/50" type="button" onClick={() => setIsEditingTitle(true)}>
@@ -722,7 +739,7 @@ function WorkoutFeedbackTab({
       });
       setDrillChanges(buildDrillChanges(previousWorkout, result.workout));
       onFeedbackSaved(result.feedback, result.workout);
-      setMessage("Feedback saved. This workout was updated, and future AI workouts will adapt too.");
+      setMessage("Feedback saved.");
     } catch {
       setMessage("Could not save feedback.");
     } finally {
@@ -750,12 +767,12 @@ function WorkoutFeedbackTab({
         </div>
 
         <label className="grid gap-2">
-          <span className="text-sm font-bold text-slate-300">What should the AI change in this workout?</span>
+          <span className="text-sm font-bold text-slate-300">Workout notes</span>
           <textarea
             className="min-h-28 rounded-lg border border-white/10 bg-white/5 p-3 text-white outline-none placeholder:text-slate-500"
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Example: make ball handling harder, reduce conditioning, add more shooting off the dribble..."
+            placeholder="What felt good? What would you like to work on next time?"
           />
         </label>
 
@@ -817,17 +834,21 @@ type DrillChange = {
 };
 
 function WorkoutSessionScreen({
+  onComplete,
   workout,
   onExit,
   onOpenTutorial
 }: {
+  onComplete: (indexes: number[]) => Promise<void>;
   workout: SavedWorkoutDetail | null;
   onExit: () => void;
   onOpenTutorial: (drill: TutorialDrill) => void;
 }) {
+  const [saveState, setSaveState] = useState('');
+  const [saving, setSaving] = useState(false);
   const steps = useMemo(() => workout ? getWorkoutSteps(workout) : [], [workout]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [skippedSteps, setSkippedSteps] = useState<WorkoutStep[]>([]);
 
@@ -837,6 +858,7 @@ function WorkoutSessionScreen({
 
   useEffect(() => {
     setCurrentIndex(0);
+    setSaveState('');
     setSkippedSteps([]);
     setIsRunning(Boolean(workout));
   }, [workout?.id]);
@@ -864,9 +886,21 @@ function WorkoutSessionScreen({
 
   useEffect(() => {
     if (isRunning && currentStep && remainingSeconds === 0) {
+      setRemainingSeconds(-1);
       setCurrentIndex((current) => Math.min(current + 1, steps.length));
     }
   }, [currentStep, isRunning, remainingSeconds, steps.length]);
+
+  async function saveCompletion() {
+    setSaving(true);
+    try { await onComplete(steps.flatMap((step,index) => skippedSteps.includes(step) ? [] : [index])); setSaveState('Progress saved.'); }
+    catch (err) { setSaveState(err instanceof Error ? err.message : 'Could not save progress. Please retry.'); }
+    finally { setSaving(false); }
+  }
+
+  useEffect(() => {
+    if (isComplete) void saveCompletion();
+  }, [isComplete]);
 
   function advanceStep(shouldSkip: boolean) {
     if (!currentStep) {
@@ -877,6 +911,7 @@ function WorkoutSessionScreen({
       setSkippedSteps((current) => [...current, currentStep]);
     }
 
+    setRemainingSeconds(-1);
     setCurrentIndex((current) => Math.min(current + 1, steps.length));
     setIsRunning(true);
   }
@@ -899,6 +934,8 @@ function WorkoutSessionScreen({
             <p className="text-sm font-bold uppercase tracking-wide text-orange-400">Workout Complete</p>
             <h1 className="mt-2 text-3xl font-extrabold">{workout.workout.title}</h1>
             <p className="mt-3 text-slate-300">Nice work. You completed {steps.length - skippedSteps.length} of {steps.length} steps.</p>
+            <button disabled={saving || saveState === 'Progress saved.'} className="mt-5 rounded-lg bg-orange-600 px-5 py-3 font-bold disabled:opacity-50" onClick={() => void saveCompletion()}>{saving ? 'Saving…' : saveState === 'Progress saved.' ? 'Progress saved' : 'Save completed workout'}</button>
+            {saveState && <p role="status" className="mt-3 text-sm text-orange-300">{saveState}</p>}
           </div>
         </DarkCard>
         <SkippedStepsList skippedSteps={skippedSteps} />
@@ -1162,16 +1199,7 @@ function HistoryScreen({
         ))}
       </div>
       <div className="mt-5 grid gap-3">
-        {filteredVideos.map((video) => (
-          <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4" key={video.id}>
-            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-extrabold">{video.fileName}</p>
-              <p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p>
-            </div>
-            <ScorePill score={video.score} compact />
-          </article>
-        ))}
+        {filteredVideos.map(video => <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4" key={video.id}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span><div className="min-w-0 flex-1"><p className="truncate font-extrabold">{video.fileName}</p><p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p></div><ScorePill score={video.score} compact /></article>)}
         {filteredHistory.map((item) => (
           <button className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4 text-left hover:border-orange-500/50" key={item.id} type="button" onClick={() => onOpenWorkout(item.id)}>
             <span className="grid h-12 w-12 place-items-center rounded-lg bg-white/5">🗓️</span>
@@ -1179,7 +1207,7 @@ function HistoryScreen({
               <p className="truncate font-extrabold">{item.title}</p>
               <p className="text-sm text-slate-400">{formatDate(item.createdAt)} · {item.totalDurationMinutes} min</p>
             </div>
-            <ScorePill score={item.feedback?.difficultyFeedback === "too_easy" ? 68 : 85} compact />
+            <span className="text-xs text-orange-300">{item.completedAt ? "Completed" : "Saved"}</span>
             <span className="text-slate-400">›</span>
           </button>
         ))}
@@ -1201,39 +1229,31 @@ function ProgressScreen({
   history: SavedWorkoutListItem[];
   analysisVideos: AnalysisVideoRecord[];
 }) {
-  const performanceData = buildPerformanceData(history);
-  const weeklyMinutes = buildWeeklyWorkoutMinutes(history);
-  const totalMinutes = history.reduce((sum, item) => sum + item.totalDurationMinutes, 0);
-  const currentWeekMinutes = weeklyMinutes[weeklyMinutes.length - 1]?.minutes ?? 0;
-
-  return (
-    <section>
-      <h1 className="text-3xl font-extrabold">Progress</h1>
-      <DarkCard title="Performance Over Time" className="mt-5">
-        <PerformanceLineChart data={performanceData} />
-      </DarkCard>
-      <DarkCard title="Workout Time by Week" className="mt-5">
-        <div className="mb-4 grid grid-cols-3 gap-3 max-[720px]:grid-cols-1">
-          <StatCard value={`${totalMinutes}`} label="Total Minutes" />
-          <StatCard value={`${history.length}`} label="Saved Workouts" />
-          <StatCard value={`${currentWeekMinutes}`} label="This Week" />
-        </div>
-        <WeeklyMinutesChart data={weeklyMinutes} />
-      </DarkCard>
-      <DarkCard title="Skill Breakdown" className="mt-5">
-        <div className="grid grid-cols-[180px_1fr] items-center gap-6 max-[640px]:grid-cols-1">
-          <div className="h-40 w-40 rounded-full" style={{ background: "conic-gradient(#f97316 0 28%, #3b82f6 28% 54%, #a855f7 54% 76%, #22c55e 76% 100%)" }} />
-          <div className="grid gap-3">
-            {["Shooting 78%", "Ball Handling 72%", "Finishing 65%", "Defense 60%", "Conditioning 70%"].map((item) => (
-              <p className="text-slate-300" key={item}>{item}</p>
-            ))}
-          </div>
-        </div>
-      </DarkCard>
-      <UploadedVideosSection videos={analysisVideos} />
-      <p className="mt-4 text-sm text-slate-500">Based on {history.length} saved workouts.</p>
-    </section>
-  );
+  const completed = history.filter(item => item.completedAt && item.completedMinutes);
+  const weeklyMinutes = buildWeeklyWorkoutMinutes(completed);
+  const totalMinutes = completed.reduce((sum,item) => sum + (item.completedMinutes || 0), 0);
+  const skills = Array.from(new Set(completed.flatMap(item => item.focusAreas)));
+  const performanceData = [...analysisVideos].reverse().map(item => ({ label: formatDate(item.uploadedAt), score: item.score }));
+  return <section>
+    <h1 className="text-3xl font-extrabold">Progress</h1>
+    <DarkCard title="Your Training" className="mt-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard value={String(completed.length)} label="Completed Workouts" />
+        <StatCard value={String(totalMinutes)} label="Training Minutes" />
+        <StatCard value={String(history.length)} label="Saved Workouts" />
+        <StatCard value={String(trainingStreak(history))} label="Day Streak" />
+      </div>
+      {!completed.length && <p className="mt-4 text-sm text-slate-400">Finish a workout and save it to start tracking progress.</p>}
+    </DarkCard>
+    <DarkCard title="Analysis Scores Over Time" className="mt-5">
+      {performanceData.length ? <PerformanceLineChart data={performanceData} /> : <p className="text-slate-400">Analyze a video to see your scores here.</p>}
+    </DarkCard>
+    <DarkCard title="Completed Workout Time by Week" className="mt-5"><WeeklyMinutesChart data={weeklyMinutes} /></DarkCard>
+    <DarkCard title="Skills Practiced" className="mt-5">
+      {skills.length ? skills.map(skill => <p key={skill} className="py-2 capitalize text-slate-300">{skill} · {completed.filter(item => item.focusAreas.includes(skill)).length} workouts</p>) : <p className="text-slate-400">Your completed workouts will show the skills you practiced.</p>}
+    </DarkCard>
+    <UploadedVideosSection videos={analysisVideos} />
+  </section>;
 }
 
 function WeeklyMinutesChart({ data }: { data: Array<{ label: string; minutes: number }> }) {
@@ -1262,16 +1282,7 @@ function UploadedVideosSection({ videos }: { videos: AnalysisVideoRecord[] }) {
     <DarkCard title="Uploaded Analysis Videos" className="mt-5">
       {videos.length ? (
         <div className="grid gap-3">
-          {videos.map((video) => (
-            <article className="flex items-center gap-4 rounded-lg border border-white/10 bg-white/5 p-4" key={video.id}>
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-extrabold text-white">{video.fileName}</p>
-                <p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p>
-              </div>
-              <ScorePill score={video.score} compact />
-            </article>
-          ))}
+          {videos.map(video => <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4" key={video.id}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span><div className="min-w-0 flex-1"><p className="truncate font-extrabold">{video.fileName}</p><p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p></div><ScorePill score={video.score} compact /></article>)}
         </div>
       ) : (
         <p className="text-sm text-slate-400">Analyze a shooting or dribbling video and it will show up here.</p>
@@ -1322,38 +1333,37 @@ function PerformanceLineChart({ data }: { data: Array<{ label: string; score: nu
 }
 
 function ProfileScreen({ history }: { history: SavedWorkoutListItem[] }) {
-  return (
-    <section>
-      <h1 className="text-3xl font-extrabold">Profile</h1>
-      <DarkCard className="mt-5">
-        <div className="flex items-center gap-4">
-          <div className="grid h-20 w-20 place-items-center rounded-full bg-slate-700 text-4xl">👤</div>
-          <div className="flex-1">
-            <p className="text-xl font-extrabold">Alex Johnson</p>
-            <p className="text-slate-400">alex@hoopcoach.ai</p>
-          </div>
-          <button className="rounded-md border border-white/20 px-4 py-2 font-bold" type="button">Edit Profile</button>
-        </div>
-      </DarkCard>
-      <div className="mt-5 grid grid-cols-4 gap-3 max-[720px]:grid-cols-2">
-        <StatCard value={String(history.length || 24)} label="Workouts" />
-        <StatCard value="18.6" label="Hours" />
-        <StatCard value="72%" label="Avg. Score" />
-        <StatCard value="🔥" label="Day Streak" />
-      </div>
-      <DarkCard className="mt-5">
-        {["Goals", "Preferences", "Account", "Subscription"].map((item) => (
-          <div className="flex items-center justify-between border-b border-white/10 py-4 last:border-0" key={item}>
-            <div>
-              <p className="font-extrabold">{item}</p>
-              <p className="text-sm text-slate-400">Manage your {item.toLowerCase()}</p>
-            </div>
-            <span>›</span>
-          </div>
-        ))}
-      </DarkCard>
-    </section>
-  );
+  const { user, saveProfile, signOut, showAuth } = useAccount();
+  const [profile, setProfile] = useState(() => {
+    if (user) return { name: user.name, goals: user.goals, skillLevel: user.skillLevel };
+    try { return JSON.parse(localStorage.getItem('hoopcoach-guest-profile') || 'null') || { name: 'Guest player', goals: '', skillLevel: 'beginner' }; }
+    catch { return { name: 'Guest player', goals: '', skillLevel: 'beginner' }; }
+  });
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  return <section>
+    <h1 className="text-3xl font-extrabold">Profile</h1>
+    <DarkCard className="mt-5" title={user ? 'Your account' : 'Guest profile'}>
+      <p className="mb-5 text-sm text-slate-400">{user?.email || 'Your data is saved only in this browser.'}</p>
+      <form className="grid max-w-xl gap-4" onSubmit={async event => {
+        event.preventDefault(); setBusy(true); setMessage('');
+        try { await saveProfile(profile); setMessage('Profile saved.'); }
+        catch (err) { setMessage(err instanceof Error ? err.message : 'Could not save profile.'); }
+        finally { setBusy(false); }
+      }}>
+        <label className="grid gap-2 text-sm font-bold">Name<input className={darkInputClass} required maxLength={100} value={profile.name} onChange={event => setProfile({ ...profile, name: event.target.value })} /></label>
+        <label className="grid gap-2 text-sm font-bold">Skill level<select className={darkInputClass} value={profile.skillLevel} onChange={event => setProfile({ ...profile, skillLevel: event.target.value })}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label>
+        <label className="grid gap-2 text-sm font-bold">Training goals<textarea className={darkInputClass} maxLength={2000} value={profile.goals} onChange={event => setProfile({ ...profile, goals: event.target.value })} placeholder="What do you want to improve?" /></label>
+        <button disabled={busy} className="rounded-lg bg-orange-600 px-4 py-3 font-bold disabled:opacity-50">{busy ? 'Saving…' : 'Save profile'}</button>
+      </form>
+      {message && <p role="status" className="mt-4 text-sm text-orange-300">{message}</p>}
+    </DarkCard>
+    <div className="mt-5 grid grid-cols-2 gap-3">
+      <StatCard value={String(history.length)} label="Saved Workouts" />
+      <StatCard value={String(history.filter(item => item.completedAt && item.completedMinutes).length)} label="Completed Workouts" />
+    </div>
+    {user ? <button disabled={busy} className="mt-5 rounded-lg border border-white/20 px-5 py-3 font-bold" onClick={async () => { setBusy(true); try { await signOut(); } catch (err) { setMessage(err instanceof Error ? err.message : 'Could not sign out.'); setBusy(false); } }}>Sign out</button> : <div className="mt-5 flex gap-4"><button className="font-bold text-orange-400" onClick={() => showAuth('signin')}>Sign in</button><button className="font-bold text-orange-400" onClick={() => showAuth('signup')}>Sign up</button></div>}
+  </section>;
 }
 
 function DarkWorkoutSection({
@@ -1464,16 +1474,20 @@ function DarkField({ label, children }: { label: string; children: React.ReactNo
 function Chip({
   selected,
   onClick,
-  children
+  children,
+  disabled = false
 }: {
   selected: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
-      className={selected ? "rounded-md bg-orange-600 px-4 py-2 text-sm font-bold" : "rounded-md border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300"}
+      className={disabled ? "rounded-md border border-white/10 px-4 py-2 text-sm text-slate-500 disabled:cursor-not-allowed" : selected ? "rounded-md bg-orange-600 px-4 py-2 text-sm font-bold" : "rounded-md border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300"}
       type="button"
+      disabled={disabled}
+      aria-pressed={selected}
       onClick={onClick}
     >
       {children} {selected ? "×" : ""}
@@ -1642,22 +1656,6 @@ function flattenWorkoutDrills(workout: GeneratedWorkout): WorkoutStep[] {
   );
 }
 
-function buildPerformanceData(history: SavedWorkoutListItem[]) {
-  const fallback = [34, 48, 41, 62, 57, 74, 63, 82, 76, 91, 86];
-  const source = history.length
-    ? history.slice(0, 11).reverse().map((item, index) => ({
-        label: `W${index + 1}`,
-        score: item.feedback?.difficultyFeedback === "too_hard"
-          ? 58
-          : item.feedback?.difficultyFeedback === "too_easy"
-            ? 68
-            : 82
-      }))
-    : fallback.map((score, index) => ({ label: `W${index + 1}`, score }));
-
-  return source.length >= 2 ? source : fallback.map((score, index) => ({ label: `W${index + 1}`, score }));
-}
-
 function buildWeeklyWorkoutMinutes(history: SavedWorkoutListItem[]) {
   const today = new Date();
   const weekStarts = Array.from({ length: 6 }, (_, index) => {
@@ -1670,9 +1668,9 @@ function buildWeeklyWorkoutMinutes(history: SavedWorkoutListItem[]) {
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 7);
     const minutes = history.reduce((sum, item) => {
-      const createdAt = new Date(item.createdAt);
+      const createdAt = new Date(item.completedAt || item.createdAt);
       return createdAt >= weekStart && createdAt < weekEnd
-        ? sum + item.totalDurationMinutes
+        ? sum + (item.completedMinutes || 0)
         : sum;
     }, 0);
 
@@ -1691,18 +1689,13 @@ function getWeekStart(value: Date) {
   return date;
 }
 
-function loadAnalysisVideoRecords(): AnalysisVideoRecord[] {
-  try {
-    const stored = localStorage.getItem("hoopcoach-analysis-videos");
-    if (!stored) {
-      return [];
-    }
-
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+function trainingStreak(history: SavedWorkoutListItem[]) {
+  const days = new Set(history.filter(item => item.completedAt && item.completedMinutes).map(item => new Date(item.completedAt!).toDateString()));
+  const cursor = new Date();
+  if (!days.has(cursor.toDateString())) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (days.has(cursor.toDateString())) { streak++; cursor.setDate(cursor.getDate() - 1); }
+  return streak;
 }
 
 function filterHistory(history: SavedWorkoutListItem[], activeTab: HistoryTab) {
@@ -1797,3 +1790,19 @@ const navItems: Array<{ view: ActiveView; label: string; short: string; icon: st
   { view: "history", label: "History", short: "Log", icon: "◴" },
   { view: "profile", label: "Profile", short: "Me", icon: "♙" }
 ];
+
+function AIStatus() {
+  const { user } = useAccount();
+  const [state, setState] = useState<"checking" | "configured" | "missing" | "offline">("checking");
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${user ? "" : import.meta.env.VITE_API_BASE_URL || ""}/api/health`, { signal: controller.signal })
+      .then(response => { if (!response.ok) throw new Error("offline"); return response.json(); })
+      .then(result => setState(result.aiConfigured === true ? "configured" : "missing"))
+      .catch(() => { if (!controller.signal.aborted) setState("offline"); });
+    return () => controller.abort();
+  }, []);
+  return <p role="status" className={`mt-4 rounded-lg border p-3 text-sm ${state === "configured" ? "border-emerald-500/30 text-emerald-300" : "border-amber-500/30 text-amber-200"}`}>
+    {state === "checking" ? "Checking AI connection…" : state === "configured" ? "AI configured · Each workout is generated when you submit." : state === "missing" ? "AI setup pending · The server needs an API key before it can generate workouts." : "AI service unavailable · Please try again later."}
+  </p>;
+}

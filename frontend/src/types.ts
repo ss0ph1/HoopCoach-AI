@@ -29,6 +29,7 @@ export type Drill = {
 };
 
 export type GeneratedWorkout = {
+  generation?: { source: "gemini" | "openai"; model: string; responseId: string | null; generatedAt: string };
   title: string;
   totalDurationMinutes: number;
   focusAreas: string[];
@@ -57,6 +58,8 @@ export type WorkoutFeedbackUpdateResponse = {
 };
 
 export type SavedWorkoutListItem = {
+  completedAt?: string;
+  completedMinutes?: number;
   id: string;
   title: string;
   totalDurationMinutes: number;
@@ -66,6 +69,8 @@ export type SavedWorkoutListItem = {
 };
 
 export type SavedWorkoutDetail = {
+  completedAt?: string;
+  completedMinutes?: number;
   id: string;
   workout: GeneratedWorkout;
   createdAt: string;
@@ -100,6 +105,7 @@ export type AnalysisFeedbackItem = {
 };
 
 export type ShootingVideoAnalysisResult = {
+  processing?: "browser";
   id?: string;
   analysisType: "shooting";
   score: number;
@@ -119,6 +125,7 @@ export type ShootingVideoAnalysisResult = {
 };
 
 export type DribblingVideoAnalysisResult = {
+  processing?: "browser";
   id?: string;
   analysisType: "dribbling";
   score: number;
