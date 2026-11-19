@@ -1,8 +1,9 @@
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useState } from "react";
 import { analyzeDribblingVideo, analyzeShootingVideo } from "../api/analysis.js";
 import { errorMessage } from "../api/error-message.js";
 import { AnalysisMethods, ShootingInsightsPanel } from "../components/ShootingInsights.js";
 import type { CaptureSetup, CameraView } from "../analysis/shooting-insights.js";
+import { SelectedVideoPreview } from "../components/VideoLibrary.js";
 import UploadShootingPhoto from "./UploadShootingPhoto.js";
 import type {
   AnalysisFeedbackItem,
@@ -25,7 +26,7 @@ export default function FormAnalysis({
   onVideoAnalyzed
 }: {
   themeMode?: "night" | "day";
-  onVideoAnalyzed?: (record: AnalysisVideoRecord) => Promise<void> | void;
+  onVideoAnalyzed?: (record: AnalysisVideoRecord, file: File) => Promise<void> | void;
 }) {
   const [activeTab, setActiveTab] = useState<AnalysisTab>("photo");
 
@@ -86,15 +87,13 @@ function VideoAnalysisPanel({
   onVideoAnalyzed
 }: {
   analysisType: "shooting" | "dribbling";
-  onVideoAnalyzed?: (record: AnalysisVideoRecord) => Promise<void> | void;
+  onVideoAnalyzed?: (record: AnalysisVideoRecord, file: File) => Promise<void> | void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<VideoAnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const [preview,setPreview] = useState("");
-  useEffect(()=>{if(!selectedFile){setPreview("");return;}const url=URL.createObjectURL(selectedFile);setPreview(url);return()=>URL.revokeObjectURL(url);},[selectedFile]);
   const [setup, setSetup] = useState<CaptureSetup>({view:"unknown",fixedCamera:false,trackBall:true});
   function updateSetup(next:CaptureSetup) { setSetup(next);setResult(null);setError(""); }
 
@@ -127,7 +126,7 @@ function VideoAnalysisPanel({
         analysisType,
         score: analysisResult.score,
         uploadedAt: new Date().toISOString()
-      });
+      }, selectedFile);
     } catch (caughtError) {
       setError(errorMessage(caughtError));
     } finally {
@@ -152,7 +151,7 @@ function VideoAnalysisPanel({
               <input className="sr-only" type="file" disabled={isLoading} accept="video/mp4,video/quicktime,video/webm,video/x-m4v" onChange={handleFileChange} />
             </label>
             {selectedFile ? <p className="mt-3 break-words text-sm font-bold text-orange-300">{selectedFile.name}</p> : null}
-            {preview && <video src={preview} controls playsInline preload="metadata" className="mt-4 max-h-64 w-full rounded-lg bg-black" aria-label="Selected training video preview" />}
+            {selectedFile && <SelectedVideoPreview file={selectedFile} />}
           </div>
         </div>
 
@@ -223,7 +222,7 @@ function ScoreSummary({
 }
 
 function CloudStorageCard({ result, local }: { result: VideoAnalysisResult | null; local: boolean }) {
-  if (local || result?.processing === "browser") return <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl"><p className="font-extrabold text-white">Video Privacy</p><p className="mt-2 text-sm text-slate-400">Videos are processed on your device. The original video is not uploaded. When signed in, your analysis summary is saved to your account.</p></article>;
+  if (local || result?.processing === "browser") return <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl"><p className="font-extrabold text-white">Video Privacy</p><p className="mt-2 text-sm text-slate-400">Videos are processed and kept in this browser for playback. The original video is not uploaded. When signed in, your analysis summary is saved to your account; playback remains on this device.</p></article>;
   return (
     <article className="rounded-xl border border-white/10 bg-[#11191d] p-5 shadow-2xl">
       <p className="font-extrabold text-white">Cloud Storage</p>

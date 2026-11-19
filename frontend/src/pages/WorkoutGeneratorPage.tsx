@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { deleteWorkout, getWorkout, listWorkouts, generateWorkout, renameWorkout, submitWorkoutFeedback } from "../api/workouts.js";
 import { useAccount } from "../context/AccountContext.js";
-import { loadAnalyses, saveAnalysis } from "../api/account.js";
+import { accountScope, loadAnalyses, saveAnalysis } from "../api/account.js";
 import { completeWorkout } from "../api/workouts.js";
+import { saveVideo } from "../analysis/video-library.js";
+import { SavedVideoCard } from "../components/VideoLibrary.js";
 import FormAnalysis from "./FormAnalysis.js";
 import type {
   GeneratedWorkout,
@@ -116,8 +118,14 @@ export default function WorkoutGeneratorPage() {
     setActiveView("session");
   }
 
-  async function handleAnalysisVideoSaved(record: AnalysisVideoRecord) {
-    try { const saved = await saveAnalysis(record); setAnalysisVideos(current => [saved, ...current]); }
+  async function handleAnalysisVideoSaved(record: AnalysisVideoRecord, file: File) {
+    const scope = accountScope();
+    try {
+      const saved = await saveAnalysis(record);
+      try { await saveVideo(scope, saved.id, file); }
+      catch { setError("Analysis saved, but the video could not be kept on this device. Check available browser storage. You can select the original video from History to restore playback."); }
+      setAnalysisVideos(current => [saved, ...current]);
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not save analysis history.'); }
   }
 
@@ -1199,7 +1207,7 @@ function HistoryScreen({
         ))}
       </div>
       <div className="mt-5 grid gap-3">
-        {filteredVideos.map(video => <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4" key={video.id}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span><div className="min-w-0 flex-1"><p className="truncate font-extrabold">{video.fileName}</p><p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p></div><ScorePill score={video.score} compact /></article>)}
+        {filteredVideos.map(video => <SavedVideoCard record={video} key={video.id} />)}
         {filteredHistory.map((item) => (
           <button className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4 text-left hover:border-orange-500/50" key={item.id} type="button" onClick={() => onOpenWorkout(item.id)}>
             <span className="grid h-12 w-12 place-items-center rounded-lg bg-white/5">🗓️</span>
@@ -1282,7 +1290,7 @@ function UploadedVideosSection({ videos }: { videos: AnalysisVideoRecord[] }) {
     <DarkCard title="Uploaded Analysis Videos" className="mt-5">
       {videos.length ? (
         <div className="grid gap-3">
-          {videos.map(video => <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-[#11191d] p-4" key={video.id}><span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-orange-500/15 text-xl">▶</span><div className="min-w-0 flex-1"><p className="truncate font-extrabold">{video.fileName}</p><p className="text-sm text-slate-400">{titleCase(video.analysisType)} analysis · {formatDate(video.uploadedAt)}</p></div><ScorePill score={video.score} compact /></article>)}
+          {videos.map(video => <SavedVideoCard record={video} key={video.id} />)}
         </div>
       ) : (
         <p className="text-sm text-slate-400">Analyze a shooting or dribbling video and it will show up here.</p>
