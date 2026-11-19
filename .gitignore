@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+backend/.env.openai
 backend/dist/
 frontend/dist/
 backend/.venv/
@@ -9,3 +10,6 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .vercel
+
+# Local recordings, screenshots, and verification fixtures
+artifacts/

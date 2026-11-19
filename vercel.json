@@ -2,9 +2,14 @@
   "installCommand": "npm install",
   "buildCommand": "npm run build",
   "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/workouts/generate.mjs": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|demo\\.html$|hoopcoach-demo\\.mp4$|hoopcoach-screen-recording\\.mp4$).*)",
       "destination": "/index.html"
     }
   ]

@@ -23,8 +23,12 @@ app.add_middleware(
 
 
 @app.get("/api/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok", "service": "HoopCoach API"}
+def health_check() -> dict:
+    return {
+        "status": "ok", "service": "HoopCoach API", "aiConfigured": bool(settings.gemini_api_key),
+        "provider": settings.ai_provider,
+        "model": settings.gemini_model,
+    }
 
 
 app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])

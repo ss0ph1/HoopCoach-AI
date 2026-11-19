@@ -8,13 +8,13 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.13
-      - key: OPENAI_MODEL
-        value: gpt-5.2
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
       - key: CORS_ORIGINS
         value: https://hoopcoach-web.vercel.app
       - key: DATABASE_URL
         sync: false
-      - key: OPENAI_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: AWS_ACCESS_KEY_ID
         sync: false

@@ -12,8 +12,9 @@ class Settings:
         "DATABASE_URL",
         "postgresql://127.0.0.1:5433/hoopflow_ai",
     )
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.2")
+    ai_provider: str = "gemini"
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "").strip()
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
     aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region: str = os.getenv("AWS_REGION", "ca-central-1")

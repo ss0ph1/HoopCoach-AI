@@ -1,8 +1,13 @@
 import json
 import math
+import logging
+import re
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from urllib.parse import quote
 from typing import Any
 
-from openai import OpenAI
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.config import get_settings
@@ -62,43 +67,54 @@ def create_workout_plan(
     request: WorkoutRequestCreate,
     recent_workouts: list[Any] | None = None,
 ) -> GeneratedWorkoutPayload:
-    if not settings.openai_api_key:
-        return create_fallback_workout(request, recent_workouts)
+    return create_gemini_workout(request, recent_workouts or [])
 
-    client = OpenAI(api_key=settings.openai_api_key)
 
+def create_gemini_workout(
+    request: WorkoutRequestCreate, recent_workouts: list[Any]
+) -> GeneratedWorkoutPayload:
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="Create a free-tier key at aistudio.google.com/apikey and set GEMINI_API_KEY on the server. Keep the Google project on the Free tier to avoid charges.")
+    body = {
+        "systemInstruction": {"parts": [{"text": "You are HoopCoach, a practical basketball coach. Generate a structured workout as JSON only."}]},
+        "contents": [{"role": "user", "parts": [{"text": build_workout_prompt(request, recent_workouts)}]}],
+        "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": WORKOUT_JSON_SCHEMA, "maxOutputTokens": 6000},
+    }
+    api_request = Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{quote(settings.gemini_model, safe='')}:generateContent",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "x-goog-api-key": settings.gemini_api_key},
+        method="POST",
+    )
     try:
-        response = client.responses.create(
-            model=settings.openai_model,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are HoopCoach, a practical basketball training coach. "
-                        "Generate safe, structured workouts as JSON only."
-                    ),
-                },
-                {"role": "user", "content": build_workout_prompt(request, recent_workouts or [])},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "hoopcoach_workout",
-                    "schema": WORKOUT_JSON_SCHEMA,
-                    "strict": True,
-                }
-            },
-        )
-        workout = GeneratedWorkoutPayload.model_validate(json.loads(response.output_text))
+        with urlopen(api_request, timeout=50) as response:
+            result = json.load(response)
+        parts = result["candidates"][0]["content"]["parts"]
+        output = "".join(part["text"] for part in parts if "text" in part and not part.get("thought"))
+        workout = GeneratedWorkoutPayload.model_validate(json.loads(output))
+        for name in ["warmup", "basketballDrills", "conditioning", "gymWorkout", "cooldown"]:
+            for drill in getattr(workout.sections, name):
+                drill.youtubeSearchUrl = create_youtube_search_url(f"basketball {drill.name} tutorial")
         return enforce_quality_rules(workout, request)
-    except Exception:
-        return create_fallback_workout(request, recent_workouts)
+    except HTTPError as error:
+        if error.code == 429:
+            raise HTTPException(status_code=429, detail="Gemini's free-tier usage limit was reached. Try again later; no paid provider was used.") from error
+        raise HTTPException(status_code=502, detail="Gemini could not generate a workout. Check the server API key and model.") from error
+    except Exception as error:
+        logging.getLogger(__name__).warning("Gemini generation failed: %s", type(error).__name__)
+        raise HTTPException(status_code=502, detail="AI generation failed. Please retry. No sample workout was substituted.") from error
 
 
 def build_workout_prompt(request: WorkoutRequestCreate, recent_workouts: list[Any]) -> str:
-    equipment = ", ".join(request.equipment) if request.equipment else "none"
+    equipment = ", ".join("basketball" if item == "ball" else item for item in request.equipment) if request.equipment else "none"
     skills = ", ".join(request.targetSkills)
     history = format_recent_workout_context(recent_workouts)
+    if "hoop" in request.equipment:
+        hoop_instructions = "A hoop is available. Do not call this a no-hoop workout or claim a hoop is unavailable."
+        if any(item in request.equipment for item in ["ball", "basketball"]) and any(skill in request.targetSkills for skill in ["shooting", "finishing"]):
+            hoop_instructions += " Include shooting or finishing drills at the basket with reps or made-shot targets, listing both basketball and hoop as equipment."
+    else:
+        hoop_instructions = "No hoop is available. Use no-hoop technique drills for shooting and finishing, explain that limitation, and do not prescribe shots at a basket."
 
     return f"""
 Create a basketball training plan with exactly {request.availableTimeMinutes} total minutes.
@@ -125,7 +141,8 @@ Rules:
 - YouTube URLs must be search links, not video links.
 - Do not mention video analysis as part of this MVP workout.
 - Total drill duration must equal exactly {request.availableTimeMinutes} minutes.
-- Only use equipment from this list unless bodyweight/open space/court is clearly implied: {equipment}.
+- Only use equipment from this list plus bodyweight or open space: {equipment}. Use these exact equipment names.
+- Never assume unselected equipment or a partner is available. {hoop_instructions}
 - Make beginner workouts technique-first and advanced workouts faster, more complex, and more game-like.
 - Make the plan realistic, safe, and practical.
 """
@@ -165,6 +182,24 @@ def enforce_quality_rules(
     workout: GeneratedWorkoutPayload,
     request: WorkoutRequestCreate,
 ) -> GeneratedWorkoutPayload:
+    allowed = {"basketball" if item == "ball" else item for item in request.equipment} | {"bodyweight", "open space", "none"}
+    if "hoop" in request.equipment:
+        if re.search(r"\b(?:no[\s\-\u2010-\u2015]*hoop|without\s+(?:a\s+)?hoop)\b", workout.title, re.IGNORECASE):
+            raise ValueError("Workout title contradicts the available hoop.")
+        if ("basketball" in allowed and any(skill in request.targetSkills for skill in ["shooting", "finishing"])
+                and not any({"basketball", "hoop"}.issubset(drill.equipment) for drill in workout.sections.basketballDrills)):
+            raise ValueError("Shooting or finishing with a ball and hoop must include a drill using both.")
+    if not set(request.targetSkills).issubset(workout.focusAreas):
+        raise ValueError("Generated workout is missing requested focus skills.")
+    for name in ["warmup", "basketballDrills", "conditioning", "gymWorkout", "cooldown"]:
+        drills = getattr(workout.sections, name)
+        if name != "gymWorkout" and not drills:
+            raise ValueError("Generated workout is missing a required section.")
+        for drill in drills:
+            if not set(drill.equipment).issubset(allowed):
+                raise ValueError("Generated workout requires unavailable equipment.")
+    if workout.totalDurationMinutes != request.availableTimeMinutes:
+        raise ValueError("Generated workout duration does not match requested time.")
     total_duration = sum(
         drill.durationMinutes
         for section_drills in [

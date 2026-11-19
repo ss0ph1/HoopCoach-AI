@@ -1,0 +1,15 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/workouts/generate.mjs": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/((?!api/|demo\\.html$|hoopcoach-demo\\.mp4$|hoopcoach-screen-recording\\.mp4$).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
